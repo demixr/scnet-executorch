@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.py[cod]
+.DS_Store
+SCNet/
+checkpoint.th
+dist/
+*.onnx
+*.pte
+*.mlpackage/
+*.mlpackage.zip
+

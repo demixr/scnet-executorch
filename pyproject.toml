@@ -1,0 +1,27 @@
+[project]
+name = "scnet-executorch"
+version = "0.1.0"
+description = "Reproducible SCNet deployment exports for Demixr"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "coremltools==9.0",
+  "executorch==1.0.1",
+  "gdown>=5.2.0",
+  "numpy>=2.0",
+  "omegaconf>=2.3.0",
+  "onnx>=1.19.0",
+  "onnxruntime>=1.23.0",
+  "torch==2.9.1",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = [
+  "export_scnet_core",
+  "export_scnet_executorch",
+  "export_scnet_coreml_native",
+]
+

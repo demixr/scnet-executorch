@@ -1,0 +1,54 @@
+name: Export and release models
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  export:
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Fetch official SCNet source and checkpoint
+        run: |
+          git clone --depth 1 https://github.com/starrytong/SCNet.git SCNet
+          uv sync
+          uv run gdown 1CdEIIqsoRfHn1SJ7rccPfyYioW3BlXcW -O checkpoint.th
+      - name: Export CPU, Core ML, and Vulkan artifacts
+        run: |
+          mkdir -p dist
+          uv run python export_scnet_core.py --source SCNet --checkpoint checkpoint.th --segment-samples 343980 --output dist/scnet_cpu.onnx
+          uv run python export_scnet_coreml_native.py --source SCNet --checkpoint checkpoint.th --segment-samples 343980 --output dist/scnet_coreml.mlpackage
+          ditto -c -k --sequesterRsrc --keepParent dist/scnet_coreml.mlpackage dist/scnet_coreml.mlpackage.zip
+          uv run python export_scnet_executorch.py vulkan --source SCNet --checkpoint checkpoint.th --segment-samples 343980 --output dist/scnet_vulkan.pte
+      - name: Build download manifest
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: uv run python scripts/build_manifest.py --tag "$RELEASE_TAG"
+      - uses: actions/upload-artifact@v5
+        with:
+          name: scnet-models-${{ github.ref_name }}
+          path: |
+            dist/scnet_cpu.onnx
+            dist/scnet_coreml.mlpackage.zip
+            dist/scnet_vulkan.pte
+            dist/models.json
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/scnet_cpu.onnx
+            dist/scnet_coreml.mlpackage.zip
+            dist/scnet_vulkan.pte
+            dist/models.json
