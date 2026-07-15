@@ -7,7 +7,7 @@ the SCNet counterpart to
 
 The repository does not fork SCNet or commit its checkpoint. Export scripts
 load the official implementation and checkpoint, preserve the learned
-weights, validate output shapes/parity, and produce fixed 7.8-second spectral
+weights, validate output shapes and waveform parity, and produce fixed 7.8-second spectral
 cores for Demixr.
 
 ## Release artifacts
@@ -84,4 +84,3 @@ The deployment scripts are MIT licensed. SCNet is MIT licensed by its
 authors; see the [official repository](https://github.com/starrytong/SCNet)
 and cite the SCNet paper when appropriate. PyTorch, ExecuTorch, Core ML Tools,
 ONNX, and ONNX Runtime retain their respective licenses.
-

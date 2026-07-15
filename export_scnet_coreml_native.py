@@ -18,7 +18,13 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from export_scnet_core import SCNetSpectralCore, _load_official_model
+from export_scnet_core import (
+    SCNetSpectralCore,
+    _load_official_model,
+    _report_waveform_parity,
+    _spectrum_to_waveform,
+    _waveform_to_spectrum,
+)
 from export_scnet_executorch import _time_frames
 
 
@@ -132,6 +138,22 @@ def main() -> None:
     )
     if correlation < 0.999:
         raise RuntimeError(f"Core ML output correlation is too low: {correlation}")
+
+    torch.manual_seed(23)
+    waveform = torch.randn(1, 2, args.segment_samples) * 0.05
+    spectrum, mean_tensor, std_tensor, padding = _waveform_to_spectrum(waveform)
+    runtime_spectrum = next(
+        iter(converted.predict({"mix_spec": spectrum.numpy()}).values())
+    )
+    actual = _spectrum_to_waveform(
+        torch.from_numpy(runtime_spectrum), mean_tensor, std_tensor, padding
+    )
+    with torch.inference_mode():
+        # SCNetSpectralCore replaces feature-conversion modules in-place.
+        # Compare against a fresh, untouched copy of the official checkpoint.
+        reference_model = _load_official_model(args.source, args.checkpoint)
+        waveform_reference = reference_model(waveform)
+    _report_waveform_parity(waveform_reference, actual, "Core ML")
 
 
 if __name__ == "__main__":

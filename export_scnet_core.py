@@ -157,7 +157,73 @@ def _verify_feature_conversions(model: nn.Module, time_frames: int) -> None:
     print("Internal FFT replacement: numerically equivalent")
 
 
-def _check_onnx(path: Path, sample: Tensor) -> None:
+def _waveform_to_spectrum(waveform: Tensor) -> tuple[Tensor, Tensor, Tensor, int]:
+    """Apply the official SCNet padding, STFT, layout, and normalization."""
+    hop = 1024
+    padding = hop - waveform.shape[-1] % hop
+    if (waveform.shape[-1] + padding) // hop % 2 == 0:
+        padding += hop
+    padded = torch.nn.functional.pad(waveform, (0, padding))
+    batch, channels, length = padded.shape
+    spectrum = torch.stft(
+        padded.reshape(-1, length),
+        n_fft=4096,
+        hop_length=hop,
+        win_length=4096,
+        center=True,
+        normalized=True,
+        return_complex=True,
+    )
+    spectrum = torch.view_as_real(spectrum)
+    frequency_bins, time_frames = spectrum.shape[1:3]
+    spectrum = spectrum.permute(0, 3, 1, 2).reshape(
+        batch, channels * 2, frequency_bins, time_frames
+    )
+    mean = spectrum.mean(dim=(1, 2, 3), keepdim=True)
+    std = spectrum.std(dim=(1, 2, 3), keepdim=True)
+    return (spectrum - mean) / (1e-5 + std), mean, std, padding
+
+
+def _spectrum_to_waveform(
+    spectrum: Tensor, mean: Tensor, std: Tensor, padding: int
+) -> Tensor:
+    """Reverse [_waveform_to_spectrum] exactly like official SCNet."""
+    batch, sources, channels, frequency, frames = spectrum.shape
+    spectrum = spectrum * std[:, None] + mean[:, None]
+    spectrum = spectrum.reshape(-1, 2, frequency, frames).permute(0, 2, 3, 1)
+    complex_spectrum = torch.view_as_complex(spectrum.contiguous())
+    waveform = torch.istft(
+        complex_spectrum,
+        n_fft=4096,
+        hop_length=1024,
+        win_length=4096,
+        center=True,
+        normalized=True,
+    )
+    waveform = waveform.reshape(batch, sources, channels // 2, -1)
+    return waveform[..., :-padding]
+
+
+def _report_waveform_parity(reference: Tensor, actual: Tensor, label: str) -> None:
+    correlation = float(
+        torch.corrcoef(torch.stack((reference.flatten(), actual.flatten())))[0, 1]
+    )
+    maximum = float((reference - actual).abs().max())
+    mean = float((reference - actual).abs().mean())
+    print(
+        f"{label} waveform parity: corr={correlation:.8f} "
+        f"max_abs={maximum:.6g} mean_abs={mean:.6g}"
+    )
+    if correlation < 0.999:
+        raise RuntimeError(f"{label} waveform correlation is too low: {correlation}")
+
+
+def _check_onnx(
+    path: Path,
+    sample: Tensor,
+    reference_model: nn.Module,
+    segment_samples: int,
+) -> None:
     import onnx
     import onnxruntime as ort
 
@@ -168,13 +234,26 @@ def _check_onnx(path: Path, sample: Tensor) -> None:
         raise RuntimeError(f"unexpected ONNX output shape: {output.shape}")
     print(f"ONNX Runtime CPU: valid, output shape {list(output.shape)}")
 
+    torch.manual_seed(23)
+    waveform = torch.randn(1, 2, segment_samples) * 0.05
+    spectrum, mean, std, padding = _waveform_to_spectrum(waveform)
+    runtime_output = session.run(
+        ["stems_spec"], {"mix_spec": spectrum.numpy()}
+    )[0]
+    actual = _spectrum_to_waveform(
+        torch.from_numpy(runtime_output), mean, std, padding
+    )
+    with torch.inference_mode():
+        reference = reference_model(waveform)
+    _report_waveform_parity(reference, actual, "ONNX")
+
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--segment-samples", type=int, default=485_100)
+    parser.add_argument("--segment-samples", type=int, default=343_980)
     parser.add_argument("--skip-runtime-check", action="store_true")
     args = parser.parse_args()
 
@@ -203,7 +282,10 @@ def main() -> None:
     print(f"Exported {args.output} ({args.output.stat().st_size / 1024 / 1024:.1f} MiB)")
 
     if not args.skip_runtime_check:
-        _check_onnx(args.output, sample)
+        # SCNetSpectralCore replaces feature-conversion modules in-place.
+        # Validate reconstructed audio against a fresh, untouched reference.
+        reference_model = _load_official_model(args.source, args.checkpoint)
+        _check_onnx(args.output, sample, reference_model, args.segment_samples)
 
 
 if __name__ == "__main__":
