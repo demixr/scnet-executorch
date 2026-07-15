@@ -7,6 +7,6 @@ SCNet/
 checkpoint.th
 dist/
 *.onnx
-*.pte
+dist/*.pte
 *.mlpackage/
 *.mlpackage.zip
