@@ -1,6 +1,7 @@
 .venv/
 __pycache__/
 *.py[cod]
+*.egg-info/
 .DS_Store
 SCNet/
 checkpoint.th
@@ -9,4 +10,3 @@ dist/
 *.pte
 *.mlpackage/
 *.mlpackage.zip
-
